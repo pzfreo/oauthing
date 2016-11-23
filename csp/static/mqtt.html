@@ -1,0 +1,104 @@
+<html>
+<head>
+  <title>OAuThing / IGNITE demonstration third-party app</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="http://yui.yahooapis.com/pure/0.6.0/pure-min.css">
+    <link rel="stylesheet" href="http://yui.yahooapis.com/pure/0.6.0/base-min.css">
+
+<script src="./browserMqtt.js"></script>
+<script>
+    
+
+
+	function getUrlVars()
+	{
+		var vars = {}, hash;
+
+		var hashes = window.location.search.slice(window.location.search.indexOf('?') + 1).split('&');
+		for(var i = 0; i < hashes.length; i++)
+		{
+			hash = hashes[i].split('=');
+
+	//    	vars.push(hash[0]);
+			vars[hash[0]] = hash[1];
+		}
+		return vars;
+	}
+	
+	  var urlVars = getUrlVars();
+	  var options = {};
+	  if ('access_token' in urlVars) {
+		  var bearer = urlVars.access_token;
+  		  options = {
+  		  	username: "Bearer",
+  	  		password: bearer
+  	  	  }
+  	  }
+  	  
+  	  
+  	  
+      var client = mqtt.connect("wss://ignite-iot.net:8443", options); // you add a ws:// url here
+
+      client.subscribe("/d/#");
+ 
+      client.on("message", function(topic, payload) {
+        message = JSON.parse(payload);
+
+        if ('shortpress' in message) {
+
+        	document.getElementById('short').value=Date() ; 
+        } else if ('longpress' in message) {
+        	document.getElementById('long').value=Date() ; 
+        }  
+      });
+ 
+ 	  var setLed = function(b) {
+ 	  	var message = { on: b };
+ 	  	var payload = JSON.stringify(message);
+ 	  	
+      	client.publish("/c/led0", payload);
+      }
+    </script> 
+</head>
+<body>
+<div class="header">
+        <h1>OAuthing / IGNITE sample third-party client</h1>
+</div>
+
+<div class="content">
+
+<h2  class="content-subhead">A client-side MQTT websocket client utilizing OAuThing OAuth2 credentials</h2>
+<p>
+
+
+	<form class="pure-form pure-form-aligned">
+    <fieldset>
+    <div class="pure-g">
+ 		<div class="pure-u-1-4"> </div>
+		<div class="pure-u-1-4"> 
+				<a class="pure-button" href="#" onclick="setLed(true);">Turn LED On</a><p/>
+
+		</div>
+		<div class="pure-u-1-4">
+	
+			<a class="pure-button" href="#" onclick="setLed(false);">Turn LED Off</a>
+
+		</div>
+		 <div class="pure-u-1-4"> </div>
+	</div>
+        <div class="pure-control-group">
+            <label for="short">Last Short Press</label>
+            <input  class="pure-input-2-3" id="short" type="text" placeholder="none yet">
+        </div>
+
+        <div class="pure-control-group">
+            <label for="long">Last Long Press</label>
+            <input  class="pure-input-2-3" id="long" type="text" placeholder="none yet">
+        </div>
+    </fieldset>
+</form>
+
+
+</body>
+</html>
