@@ -1,0 +1,4 @@
+FROM alpine
+RUN apk add --update mosquitto
+EXPOSE 1883
+ENTRYPOINT ["mosquitto", "-v"]

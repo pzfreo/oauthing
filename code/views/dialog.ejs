@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>OAuThing Device Registration</title>
+  <!-- Needed for mobile sites to work -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Style sheets -->
+  <link rel="stylesheet" type="text/css" href="../stylesheets/pure-min.css">
+  <link rel="stylesheet" type="text/css" href="../stylesheets/base.css">
+  <link rel="stylesheet" type="text/css" href="../stylesheets/dialog-modules.css">
+</head>
+<body>
+
+<form action="/dialog/authorize/decision" method="post" class="pure-form pure-form-stacked">
+  <input name="transaction_id" type="hidden" value="<%= transactionID %>">
+  <fieldset>
+    <!-- Upper box with Title, username, and password -->
+    <div class="upper-box">
+      <!-- Title -->
+      <div>
+        <div class="main-text">Device Registration</div>
+        <div class="subtext">Authorization Server</div>
+      </div>
+      <div class="pure-control-group labels">
+        <p>
+
+        <p><%= user.name %>,</p>
+        <p><%= client.scope %></p>
+        The device <b><%= client.id %></b> is requesting to be owned by you<p/>
+        and publish data on your behalf, and act on your commands. It will 
+        not know your name or account details. Instead it will only use an anonymous token.
+        <p>Do you approve?</p>
+        </p>
+      </div>
+    </div>
+    <!-- Bottom box with Sign in -->
+    <div class="bottom-box">
+      <div class="pure-controls accept-cancel-buttons">
+        <div>
+          <input class="pure-button pure-button-primary" type="submit" value="Accept" id="allow">
+          <!-- Cheat to make a bit of spacing -->
+          <span>&nbsp&nbsp</span>
+          <input class="pure-button" type="submit" value="Deny" name="cancel" id="deny">
+        </div>
+      </div>
+    </div>
+  </fieldset>
+</form>
+
+</body>
+</html>
+
+

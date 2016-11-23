@@ -1,0 +1,15 @@
+FROM alpine:3.3
+RUN apk --update add nodejs wget tar && \
+	ln -s /usr/bin/nodejs /usr/local/bin/node && \
+	npm install -g forever && \
+	mkdir -p /home/root/js && \
+	mkdir -p /home/root/keys
+		
+ADD aedes /home/root/js/
+RUN cd /home/root/js/ && \
+    npm install 
+    
+EXPOSE 8443
+EXPOSE 8888
+WORKDIR /home/root/js/
+ENTRYPOINT  forever app.js

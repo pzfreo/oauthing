@@ -1,0 +1,17 @@
+FROM alpine:3.3
+RUN apk --update add nodejs wget tar && \
+	ln -s /usr/bin/nodejs /usr/local/bin/node && \
+	npm install -g forever && \
+	mkdir -p /home/root/js && \
+	mkdir -p /home/root/keys
+	
+RUN wget --no-check-certificate https://github.com/jwilder/dockerize/releases/download/v0.2.0/dockerize-linux-amd64-v0.2.0.tar.gz
+RUN tar -C /usr/local/bin -xzvf dockerize-linux-amd64-v0.2.0.tar.gz
+	
+ADD code /home/root/js/
+RUN cd /home/root/js/ && \
+    npm install 
+    
+EXPOSE 443
+WORKDIR /home/root/js/
+ENTRYPOINT dockerize -wait tcp://cassandra:9042 -timeout 60s  && node cassandradb/createdb.js && forever app.js
