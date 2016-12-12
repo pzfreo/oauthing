@@ -99,7 +99,7 @@ void writeEEPROM() {
     Serial.println(refreshtoken);
     Serial.println(strlen(refreshtoken));
     Serial.println(n);
-  
+
     EEPROM.write(n++, strlen(refreshtoken) + 1);
     for (int i = 0;  i < strlen(refreshtoken); i++) {
       EEPROM.write(n++, (unsigned int)refreshtoken[i]);
@@ -202,15 +202,17 @@ void mqttreconnect() {
   // need to deal with uid/pw and refresh in the case of state 2.
   while (!mqttclient.connected()) {
     Serial.print("Attempting MQTT connection...");
+    Serial.print("State:");
+    Serial.println(state);
     if (state == 0) { // when in manufacturing use the device id as the mqtt client id
-    char deviceid[8] = {0};
-    sprintf(deviceid, "%i", chipid);
-    success = mqttclient.connect(deviceid); // no password in manufacturing stage
+      char deviceid[8] = {0};
+      sprintf(deviceid, "%i", chipid);
+      success = mqttclient.connect(deviceid); // no password in manufacturing stage
     }
     else {
       success = mqttclient.connect(client_id, client_id, client_secret);
-      boolean verified = secureClient.verify("47:70:1A:5A:61:ED:0C:F4:BE:83:0E:84:34:E9:0D:4A:93:2D:15:A0", "oauthing.io");
-      Serial.print(verified?"verified tls!":"unverified tls");
+      boolean verified = secureClient.verify("03:DB:9A:3F:D0:21:D8:5D:B0:D4:CC:E4:6B:94:52:37:96:47", "oauthing.io");
+      Serial.print(verified ? "verified tls!" : "unverified tls");
     }
     if (success) {
       // nothing to do here!
@@ -333,7 +335,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
       mqttclient.publish("/ready", buffer);
       Serial.println("refreshed");
       delay(5000);
-//      ESP.reset();
+      //      ESP.reset();
     }
     else
     {
@@ -353,10 +355,10 @@ void callback(char* topic, byte* payload, unsigned int length) {
         Serial.println("can't parse JSON with accesstoken/refreshtoken in it");
         ESP.reset();
       }
-//      strcpy(refreshtoken, root["refresh_token"]);
+      //      strcpy(refreshtoken, root["refresh_token"]);
       strcpy(accesstoken, root["access_token"]);
-//      access_token_expires = root["expires_in"];
-//      writeEEPROM();
+      //      access_token_expires = root["expires_in"];
+      //      writeEEPROM();
       configured = true;
       Serial.println("refreshed");
       Serial.print("refresh: "); Serial.println(refreshtoken);
@@ -400,11 +402,11 @@ void setup() {
   if (state == 0) {
     mqttclient = PubSubClient(mfrserver, mfrport, callback, wifiClient);
   }
-  else 
+  else
   {
     mqttclient = PubSubClient(oauthing, oauthingport, callback, secureClient);
   }
-//  mqttclient.setCallback(callback);
+  //  mqttclient.setCallback(callback);
 
 
   // state 0 = wait for clientid/secret
@@ -459,7 +461,7 @@ void setup() {
     // state 1 = wait for OAuth token
     // connect to proper server
     // Flash LED every second
-    mqttclient.setServer(oauthing, 1883).setCallback(callback);
+    mqttclient.setServer(oauthing, 8883).setCallback(callback);
     mqttreconnect();
     char subsstring[50] = {0};
     sprintf(subsstring, "/cid/%s/#", client_id);
