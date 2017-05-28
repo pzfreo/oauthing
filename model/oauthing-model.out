@@ -1,0 +1,54 @@
+Welcome to FDR Version 4.2.0 copyright 2016 Oxford University Innovation Ltd. All Rights Reserved.
+License: Academic license for non-commercial use only
+SYS(FC.0, FC.0) |\ lspecevents [T= LSPEC:
+    Log:
+        Result: Failed
+        Visited States: 3
+        Visited Transitions: 3
+        Visited Plys: 1
+        Estimated Total Storage: 0B
+        Counterexample (Trace Counterexample)
+            Specification Debug:
+                Trace: <failure>
+                Available Events: {error, success}
+            Implementation Debug:
+                LSPEC (Trace Behaviour):
+                    Trace: <failure>
+                    Error Event: appconsent
+NS [T= SYS(FC.0, FC.0) |\ specevents:
+    Log:
+        Result: Passed
+        Visited States: 1,461,364
+        Visited Transitions: 7,440,420
+        Visited Plys: 68
+        Estimated Total Storage: 268MB
+NS [F= SYS(FC.0, FC.0) |\ specevents:
+    Log:
+        Result: Passed
+        Visited States: 1,461,364
+        Visited Transitions: 7,440,420
+        Visited Plys: 68
+        Estimated Total Storage: 268MB
+NS [FD= SYS(FC.0, FC.0) |\ specevents:
+    Log:
+        Result: Passed
+        Visited States: 1,461,364
+        Visited Transitions: 7,440,420
+        Visited Plys: 68
+        Estimated Total Storage: 268MB
+SYS(FC.0, FC.1) |\ specevents [T= NS:
+    Log:
+        Result: Failed
+        Visited States: 27
+        Visited Transitions: 42
+        Visited Plys: 8
+        Estimated Total Storage: 0B
+        Counterexample (Trace Counterexample)
+            Specification Debug:
+                Trace: <appconsent, devconsent>
+                Available Events: {}
+            Implementation Debug:
+                NS (Trace Behaviour):
+                    Trace: <τ, τ, τ, τ, appconsent, devconsent, τ, τ>
+                    Error Event: act.C.1
+

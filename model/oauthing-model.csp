@@ -1,0 +1,492 @@
+-- OAuthing Model
+-- Device Identity and Federated Access Management
+
+-- We have two primary things we wish to transfer
+-- data comes from devices and is logdata by apps
+-- commands are send by apps and logdata by devices
+
+datatype Data = D.{0..1}
+datatype Command = C.{0..1}
+
+-- What is a device? A device has one or more sensors or actuators
+-- a sensor senses and then sends data (sd) elements
+channel sense: Data
+channel sd : Data
+SENSOR =  sense$d -> sd!d -> SENSOR
+
+-- and actuator receives commands (rc) and then acts on those commands
+channel rc : Command
+channel act: Command
+ACTUATOR = rc?c -> act!c -> ACTUATOR
+
+-- a device can handle sensing and actuating independently
+-- note that a device can contain multiple sensors
+-- and actuators, but that doesn't change its process definition
+DEVICE = SENSOR ||| ACTUATOR
+
+
+-- An app consists of data consumers and command publishers.
+-- Data Consumer DC reads data (rd) and then logs it (logdata)
+channel rd : Data
+channel logdata: Data
+DC = rd?d -> logdata.d -> DC
+
+
+-- Command Publisher CP
+-- A user or app demands a command from a device, which is sent (sc) 
+channel sc : Command
+channel demand: Command
+CP = demand$c -> sc!c -> CP
+APP = DC ||| CP
+
+
+-- We want to spot when there are errors (e.g. login failures, refused consent) where we want
+-- the process to stop. 
+
+channel error
+-- cd is the set of events used by the app and device
+cd = { rc.c, sc.c, rd.d, sd.d, sense.d, demand.c | c<-Command, d<-Data}
+
+
+-- we differentiate between deviceconsent and appconsent. noconsent can apply to either scenario
+-- this is because we wish to specify that consent has been given to both the device and the app.
+
+channel devconsent
+channel appconsent
+channel noconsent
+
+-- the consent events (ce) is the set of those three events
+ce = {devconsent, appconsent , noconsent}
+
+
+-- We have a set of Users
+datatype User=  U.{0..1}
+
+-- A user login is actually made against a User Identity Provider.
+-- login indicates a request to login
+-- lu responds with the user identifier
+channel login
+channel lu:User
+
+--  success indicates login, failure indicates no login
+channel success, failure
+
+
+LOGIN(u) = login -> (success -> lu.u -> SKIP [] failure -> STOP)
+
+
+-- We can define federated login to the UIDP 
+datatype Fedcred = FC.{0..1}
+fu(FC.0) = U.0
+fu(FC.1) = U.1
+fu(FC.2) = U.2
+cfu(U.0) = FC.0
+cfu(U.1) = FC.1
+cfu(U.2) = FC.2
+
+
+channel fedlogin: Fedcred
+channel fedsucc, fedfail
+
+--UIDP = login -> fedlogin?fc -> (success -> lu!fu(fc) -> UIDP) [] failure -> STOP
+
+UIDP = login -> fedlogin?fc -> (success -> lu!fu(fc)  -> SKIP [] failure -> STOP)
+
+
+-- The DIDP converts the real user identity into a pseudonym. 
+-- The pseudonym is a unique random identifier where no two users have the same pseudonym
+-- (is this a unique bijection?)
+
+-- There is a function from users to pseudonyms. In the system a pseudonym is a random string
+-- we model this with a function p(user) -> pseud
+datatype Pseud = PA | PB | PC
+p(U.0) = PA
+p(U.1) = PB
+p(U.2) = PC
+
+
+-- OAuth2 definitions
+-- An authcode is a temporary code used as part of the token issuance process 
+-- TODO the exact part of the spec
+datatype AuthCode = AC.{0..1}
+channel authcode: AuthCode
+
+-- A bearer token is used to authenticate from the device or the app to the IG
+-- From our perspective a bearer token can either be valid or not
+datatype Bearer = B.{0..1}
+
+-- A Refresh token is used to refresh the bearer token
+datatype Refresh = R.{0..1}
+
+-- We define scopes that the system supports
+
+-- part of the token API is to refresh a bearer token
+channel token_refresh_req: ClientID.ClientSecret.Refresh
+channel token_refresh_resp: Bearer
+datatype ClientID = CID.{0..1}
+datatype ClientSecret = CS.{0..1}
+channel credential: ClientID.ClientSecret
+channel token_ac_req: ClientID.ClientSecret.AuthCode 
+channel token_ac_resp: Refresh.Bearer 
+
+-- When a device is being registered it must be contactable. Therefore it announces its presence
+channel presence: ClientID
+
+-- when a user scans a device QR code, this initiates a claim for that ClientID
+channel claim: ClientID
+
+-- The GW supports the connect / connected
+channel connect: Bearer
+channel connected
+
+
+channel introspect: Bearer
+channel valid: Pseud.Scope
+channel invalid
+
+
+
+-- DIdP to Dev events
+didp2d = { 	presence.cid, authcode.ac, token_ac_req.cid.cs.ac, 
+		token_ac_resp.r.b, token_refresh_req.cid.cs.r, token_refresh_resp.b
+		| cid <- ClientID, cs <- ClientSecret, ac <- AuthCode, r <- Refresh, b <- Bearer}
+-- DIdP to Manufacturer events 
+didp2m = { dcrrequest, credential.cid.cs  | cid <- ClientID, cs <- ClientSecret}
+-- DIdP to App Creator events are the same
+didp2ac = didp2m
+-- DIdP to Gateway
+didp2gw = {introspect.b, valid.p.s, invalid |b <- Bearer,  p<-Pseud, s <- Scope} 
+-- DIdP to User
+didp2u = {lu.u , login,  devconsent, noconsent, useraccess, appconsent, success, failure, claim.cid | u <- User, cid<-ClientID}
+--ue = {claim.cid, login.u, success, failure, devconsent, noconsent | cid <- ClientID, u<-User}
+-- All DIdP events
+didpe = Union({didp2d,didp2m,didp2gw,didp2u, {error}})
+
+-- The manufacturer has events
+channel updatedevice:ClientID.ClientSecret
+channel manufacture 
+
+-- All events the manufacturer interacts on
+me = {manufacture, dcrrequest, credential.cid.cs, updatedevice.cid.cs |cid<-ClientID,cs<-ClientSecret}
+
+-- ----------------------------------------
+-- ---------------  DEVICE  ---------------
+-- ----------------------------------------
+	 
+-- ----------------------------------------
+-- --------------- STAGE 1  ---------------
+-- ----------------------------------------
+
+-- The first act is the manufacturer manufactures a device, calls to the DIdP for a credential (using DCR)
+-- and updates the device with the credential. We then say it is done (of course in reality it would create another device)
+
+MAN = manufacture -> dcrrequest -> credential?cid.cs -> updatedevice!cid.cs -> STOP
+
+-- DCR is a request from the manufacture server to create a client id / client secret
+-- We are abstracting the actual details of the API
+-- Once the DCR has happened then the DIPD can support a User Registration for that cid/cs
+
+channel dcrrequest
+DIDP = [] cid<-ClientID, cs<-ClientSecret @ DIDP_A(cid,cs)
+
+DIDP_A(cid, cs) = dcrrequest -> credential.cid.cs -> UR(cid, cs)
+
+-- Our system (only considering devices so far) is created from putting the Manufacturer
+-- together with the DIdP
+DSYS1 = MAN [me || didpe] DIDP
+
+-- ----------------------------------------
+-- --------------- STAGE 2  ---------------
+-- ----------------------------------------
+-- Stage 2 is to program the credentials into the device
+
+-- The device communicates with the manufacturer, the DIdP and the Gateway
+-- Device Manufacture events
+dme = {manufacture, updatedevice.cid.cs  | cid <- ClientID, cs <- ClientSecret}
+
+-- Device to DIDP events
+dde = {presence.cid, authcode.ac, token_ac_req.cid.cs.ac, token_ac_resp.r.b, token_refresh_req.cid.cs.r, token_refresh_resp.b
+	 	 | cid <- ClientID, cs <- ClientSecret, ac <- AuthCode, r <- Refresh, b <- Bearer}
+-- Device to GW events
+dge = {connect.b, connected, sd.d, rc.c, dackd, dackc  | b<-Bearer, d<-Data, c<-Command}
+
+hde = {act.c, sense.d | d<-Data, c<-Command}
+--dae = {dackd, dackc}
+-- All Device Events
+deve = Union({dge,dme,dde,hde})
+
+-- A fresh device is updated by the manufacturing server into a device with a cid/cs
+FD = manufacture -> updatedevice?cid.cs -> RD(cid, cs)
+
+-- The next stage of the system is to add the device into the system
+-- We can hide the manufacturing events as they are isolated to this part
+DSYS2 = FD [deve || union(didpe,me)] DSYS1 \ me
+
+-- ----------------------------------------
+-- --------------- STAGE 3  ---------------
+-- ----------------------------------------
+-- Stage 3 is that the user needs to "own" the device by logging in and then consenting
+
+-- There are two parts to this. The DIdP has an interface (we call this User Registration)
+-- This is where the user's identity is pseudonymised
+UR(cid,cs) = URD(cid,cs) [] URA(cid,cs)
+URD(cid,cs) = presence.cid -> claim.cid -> login -> URD_A(cid,cs)
+URD_A(cid,cs) = success -> lu?u -> URD_B(cid,cs,u) [] failure -> error -> STOP
+URD_B(cid,cs,u) = devconsent -> authcode$ac -> TOKEN_AC(p(u),cid,cs,ac,PdRc) [] noconsent -> error -> STOP
+
+
+URA(cid,cs) = useraccess -> login -> URA_A(cid,cs)
+URA_A(cid,cs) = success -> lu?u -> URA_B(cid,cs,u) [] failure -> error -> STOP
+URA_B(cid,cs,u) = appconsent -> authcode$ac -> TOKEN_AC(p(u),cid,cs,ac,RdPc)  [] noconsent -> error -> STOP
+
+-- The 
+ue = {claim.cid, lu.u, login, success, failure, appconsent, useraccess, devconsent, noconsent | cid <- ClientID, u<-User}
+--ue = {claim.cid, login.u, success, failure, devconsent, noconsent | cid <- ClientID, u<-User}
+--USERCLAIM(u,cid) = claim.cid -> login -> (success -> lu!u -> (devconsent -> SKIP [] noconsent -> STOP)) [] failure -> STOP
+--UC(u) = [] cid <- ClientID @ USERCLAIM(u,cid)
+
+USERCLAIM(fc,cid) = claim.cid -> login -> fedlogin!fc -> (success -> lu?u -> (devconsent -> SKIP [] noconsent -> STOP) [] failure -> STOP)
+UC(fc) = [] cid <- ClientID @ USERCLAIM(fc,cid)
+
+
+-- In addition, the device needs to be present for this part and to respond to the AuthCode.
+RD(cid,cs) = presence!cid -> (authcode?ac -> RD_A(cid, cs, ac) [] failure -> error -> STOP)
+DSYS3(fc) =  DSYS2 [ union(didpe,deve) || ue ] FUSER(fc) \ {login, lu.u | u<-User}
+
+fedevents = {fedlogin.fc, login, lu.u, success, failure | u<-User, fc <-Fedcred}
+fue = {claim.cid, fedlogin.fc, login, lu.u, success, failure, appconsent, useraccess, devconsent, noconsent | cid <- ClientID, fc<-Fedcred, u<-User}
+due = {claim.cid, lu.u, login, appconsent, useraccess, devconsent, noconsent, success, failure | cid<-ClientID, u<-User}
+
+FUSER(fc) = (UC(fc) [fue || fedevents] UIDP) |\ due
+
+-- The DIDP then supports turning the Authcode into a Refresh Token (another part of Token api)
+TOKEN_AC(p,cid,cs,ac,scope) = token_ac_req.cid.cs.ac -> token_ac_resp$r$a -> TOKEN_REF(p,cid,cs,r,scope)
+
+-- And the device requests it
+RD_A(cid,cs,ac) = token_ac_req!cid.cs.ac -> token_ac_resp?r.a -> OD(cid, cs, r)
+
+-- The DIDP supports refreshing the token
+TOKEN_REF(p,cid,cs,r,s) = token_refresh_req.cid.cs.r -> token_refresh_resp$bearer -> INTRO(bearer,p,s)
+-- and the device requests a refreshed token
+OD(cid, cs, r) = token_refresh_req.cid.cs.r -> token_refresh_resp?bearer -> SD(bearer, cid, cs, r)
+
+-- The DIdP is now ready to respond to Introspection queries from the GW
+INTRO(b,p,s) = introspect.b  -> valid!p!s -> INTRO(b,p,s) [] introspect?n : {x | x <- Bearer, x != b} -> invalid -> INTRO(b,p,s) 
+
+
+-- ----------------------------------------
+-- --------------- STAGE 4  ---------------
+-- ----------------------------------------
+-- The Device wants to connect to the GW using the Bearer token
+
+--channel act: Command
+--channel sense: Data
+	
+channel dackd
+channel dackc
+SENS = 	sense$dat -> sd!dat -> dackd -> SENS
+ACT =  rc?c -> act!c -> dackc -> ACT
+--SENS = 	sense$dat -> sd!dat -> SENS
+--ACT =  rc?c -> act!c ->  ACT
+
+DV = SENS ||| ACT
+
+
+SD(bearer, cid, cs, r) = connect!bearer -> (connected -> DV) -- [] failed -> STOP)
+
+-- The Gateway waits for a connect message and then uses the DIDP to validate it. If successful it 
+-- then creates (or connects to) a PCM specific to that user
+--IGCD = connect?b -> introspect!b -> ((valid?u -> connected -> PCMD(u))) -- [] (invalid -> failed -> IGC))
+--IGCA = connect?b -> introspect!b -> ((valid?u -> connected -> PCMA(u))) -- [] (invalid -> failed -> IGC))
+
+
+--IGCD = connect?b -> introspect!b -> ((valid?p?s -> connected -> PCM(p,s))) -- [] (invalid -> failed -> IGC))
+IGCA = connect?b -> introspect!b -> ((valid?p?s -> connected -> PCM(p,s))) -- [] (invalid -> failed -> IGC))
+
+IG = connect?b -> introspect!b -> (valid?p?s -> connected -> PCM(p,s)) -- [] invalid -> error -> STOP)
+
+-- The PCM synchronizes on the data and commands
+channel dpcm:Pseud.Data
+channel cpcm:Pseud.Command
+
+channel pcmackd
+channel pcmackc
+
+channel senddata,recdata: Pseud.Data
+channel sendcom,reccom: Pseud.Command
+
+
+channel pcmacksd, pcmackrd, pcmacksc, pcmackrc
+
+datatype Scope = PdRc | RdPc | Pd | Rc | Rd | Pc
+
+
+PCM(p, Pd) =  sd?d -> senddata.p!d ->  pcmacksd -> dackd -> PCM(p, Pd) 
+PCM(p, Rc) =  reccom.p?c -> rc!c -> pcmackrc -> dackc-> PCM(p, Rc)
+PCM(p, PdRc) = PCM(p, Pd) ||| PCM(p, Rc)
+
+PCM(p, Pc) = sc?c -> sendcom.p!c -> pcmacksc -> aackc -> PCM(p,Pc) 
+PCM(p, Rd) =  recdata.p?d -> rd!d -> pcmackrd -> aackd-> PCM(p,Rd) 
+PCM(p, RdPc) = PCM(p,Rd) ||| PCM(p,Pc)
+
+
+
+pcme = {senddata.p.d, sendcom.p.c, recdata.p.d, reccom.p.c, pcmackrd, pcmacksd,pcmacksc, pcmackrc | d<-Data, c<-Command, p<-Pseud}
+
+-- We can now connect the GW to the rest of the system
+gwe = {connect.b, introspect.b, valid.p.s, connected, invalid,  dackd, dackc, aackd, aackc, rd.d, sd.d, rc.c, sc.c
+			| b <- Bearer, p<-Pseud, d<-Data, c<-Command, s<-Scope}
+
+DSYS(fc) = IG [Union({gwe,pcme}) || Union({didpe, hde, gwe}) ] DSYS3(fc) 
+
+	
+loginevents = {success, failure}
+-- cdse are login, consent and data,command
+cdse = Union({loginevents,cd,ce})
+
+
+TESTAPP1 = rd?d -> logdata!d -> aackd -> TESTAPP1
+TESTAPP2 = demand$c -> sc!c -> aackc -> TESTAPP2
+TESTAPP = success -> (appconsent -> (TESTAPP1 ||| TESTAPP2) [] noconsent -> error -> STOP) [] failure -> error -> STOP
+
+
+--DSYS = (DSYS4(U.0) [ reccom <-> sendcom, senddata <-> recdata] FAKEAPP(U.0) ) |\ Union({loginevents,ce,hae,hde,pcme})
+DSYSU(fc1,fc2) = (DSYS(fc1) [reccom <-> sendcom, pcmacksd <-> pcmackrd, pcmackrc<->pcmacksc, senddata <-> recdata] (PCM(p(fu(fc2)),RdPc) [| {sc.c, rd.d, aackd, aackc  | d<-Data, c<-Command} |] TESTAPP)) [| {error}|> STOP
+
+--DSYS = DSYSU(FC.0, FC.0)
+-- Our spec is that an app (even a fake one), cannot receive any events until success login and consent
+
+lspecevents = {error, appconsent, devconsent, success, failure }
+LSPEC = failure -> appconsent -> STOP [] failure -> devconsent -> STOP
+
+-- this should fail
+assert  SYS(FC.0,FC.0) |\ lspecevents [T= LSPEC 
+--assert  SYS(FC.0,FC.0) |\ lspecevents [F= LSPEC 
+--assert LSPEC [T= SYS(FC.0,FC.0) |\ lspecevents
+
+
+
+NSSUCC = 	appconsent -> devconsent -> NS2 |~|
+			devconsent -> appconsent -> NS2 |~|
+			error -> STOP |~|
+			appconsent -> error -> STOP |~|
+			devconsent -> error -> STOP
+
+	
+
+NS2 = sense$d -> logdata.d -> NS2 [] demand$c -> act.c -> NS2
+
+NS =  NSSUCC [| {error} |>  STOP |\ specevents
+
+--this should fail
+--assert DSYSU(FC.0,FC.1) |\ specevents [T= DSYSU(FC.0,FC.0) |\ specevents
+
+specevents = {error, appconsent, devconsent, logdata.d, act.c | d<-Data, c<-Command}
+--assert NS [T= DSYSU(FC.0,FC.0) |\ specevents
+--assert NS [F= DSYSU(FC.0,FC.0) |\ specevents
+--assert NS [FD= DSYSU(FC.0,FC.0) |\ specevents
+
+-- this should fail
+--assert NS [F= DSYSU(FC.0,FC.1) |\ specevents
+
+
+-- ----------------------------------------
+-- --------------APPLICATION---------------
+-- ----------------------------------------
+
+-- We start off with the need to create an App.
+-- This can use the same DCR API on the DIDP that the Device uses
+
+APPCREATE = dcrrequest -> credential?cid?cs -> RA(cid,cs)
+-- Once the App is registered, it waits for a user to request access.
+-- This initiates the OAuth2 authorization flow
+channel useraccess
+RA(cid,cs) = useraccess -> (authcode?ac -> RA_A(cid,cs,ac)) -- [] failure -> STOP
+
+-- The user requests access and then must approve the app.
+USERAPPROVE(fc) = useraccess -> login -> (fedlogin!fc -> success -> lu?u -> (appconsent -> SKIP [] noconsent -> STOP) [] failure -> STOP)
+
+--fedevents = {fedlogin.fc, login, lu.u, success, failure | u<-User, fc <-Fedcred}
+--fue = {claim.cid, fedlogin.fc, login, lu.u, success, failure, appconsent, useraccess, devconsent, noconsent | cid <- ClientID, fc<-Fedcred, u<-User}
+--due = {claim.cid, lu.u, login, appconsent, useraccess, devconsent, noconsent, success, failure | cid<-ClientID, u<-User}
+
+
+FUA(fc) = (USERAPPROVE(fc) [fue || fedevents] UIDP) |\ due
+
+-- Once the user approves the app, it uses TOKEN_AC and TOKEN_REF to get a valid bearer
+RA_A(cid,cs,ac) = token_ac_req!cid.cs.ac -> token_ac_resp?r.b -> SA(cid,cs,r)
+SA(cid,cs,r) =  token_refresh_req!cid.cs.r -> token_refresh_resp?bearer -> TA(bearer, cid, cs, r)
+
+-- Once it has a valid bearer it can connect to the GW
+--TA(b, cid, cs) = connect!b -> ((connected -> APP) [] (failed -> SA(cid,cs,r)))
+
+--channel logdata: Data
+--channel demand: Command
+
+channel aackd
+channel aackc
+A1 = rd?d -> logdata!d -> aackd -> A1
+A2 = demand$c -> sc!c -> aackc -> A2
+--A1 = rd?d -> logdata!d ->  A1
+--A2 = demand$c -> sc!c -> A2
+
+A = A1 ||| A2
+
+allc = { c | c<-Command}
+
+TA(b, cid, cs, r) = connect!b -> (connected -> A) --[] failed -> STOP )
+
+-- The app uses the following events to communicate with the user
+aue = {useraccess}
+-- App to DIDP events
+adde =  {dcrrequest, credential.cid.cs, authcode.ac, token_ac_req.cid.cs.ac,
+		 token_ac_resp.r.b, token_refresh_req.cid.cs.r, token_refresh_resp.b
+			| ac <-AuthCode, cid <- ClientID, cs<-ClientSecret, r<-Refresh, b<-Bearer}
+-- App to GW events (NOT the same as Dev to GW)
+age = {connect.b, connected, rd.d, sc.c | b<-Bearer, d<-Data, c<-Command}
+hae = { logdata.d, demand.c | d<-Data,c<-Command}
+aae = {aackd, aackc}
+-- all app events
+ae = Union({aue,adde,age,hae,aae})
+
+uae = {useraccess, lu.u, login, success, failure, appconsent, noconsent | u<-User}
+
+
+
+appdidpe = diff(didpe, {presence.cid, claim.cid, devconsent | cid <- ClientID})
+ASYS1 = DIDP [appdidpe||ae] APPCREATE 
+ASYS2(fc) =  (ASYS1 [ Union({didpe,ae}) || uae ] FUA(fc)) \ {login, lu.u | u<-User}
+
+
+ASYS(fc) = IGCA [Union({gwe,pcme}) || Union({didpe, gwe, hae}) ] ASYS2(fc)
+
+TESTDEV1 = sense$d -> sd!d -> dackd ->  TESTDEV1 
+TESTDEV2 = rc?c -> act!c -> dackc -> TESTDEV2
+TESTDEV = success -> (devconsent -> (TESTDEV1 ||| TESTDEV2) [] noconsent -> error -> STOP) [] failure -> error -> STOP
+
+
+
+
+ASYSU(fc1,fc2) = ((TESTDEV [| {sd.d, rc.c, dackd, dackc  | d<-Data, c<-Command} |] PCM(p(fu(fc1)),PdRc)) [reccom <-> sendcom, pcmacksd <-> pcmackrd, pcmackrc<->pcmacksc, senddata <-> recdata] ASYS(fc2) ) [| {error}|> STOP
+
+--assert NS [T= ASYSU(FC.0,FC.0) |\ specevents
+--assert NS [F= ASYSU(FC.0,FC.0) |\ specevents
+--assert NS [FD= ASYSU(FC.0,FC.0) |\ specevents
+
+-- this should fail
+--assert NS [F= ASYSU(FC.0,FC.1) |\ specevents
+
+
+------ NOW PUT THEM BOTH TOGETHER
+
+
+SYS(fc1,fc2) = (DSYS(fc1) [ reccom <-> sendcom, pcmacksd <-> pcmackrd, pcmackrc<->pcmacksc, senddata <-> recdata ] ASYS(fc2)) [| {error}|> STOP
+
+
+assert NS [T= SYS(FC.0,FC.0) |\ specevents
+assert NS [F= SYS(FC.0,FC.0) |\ specevents
+assert NS [FD= SYS(FC.0,FC.0) |\ specevents
+
+assert  SYS(FC.0,FC.1) |\ specevents [T= NS 
+assert NS [F= SYS(FC.0, FC.1) |\ specevents
+
